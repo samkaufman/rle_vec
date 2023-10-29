@@ -512,8 +512,26 @@ impl<T: Eq + Clone> RleVec<T> {
     /// assert_eq!(rle.runs_len(), 5);
     /// ```
     pub fn set(&mut self, index: usize, value: T) {
-        let (mut p, start, end) = self.index_info(index);
+        let (p, start, end) = self.index_info(index);
+        self.set_internal(index, value, p, start, end);
+    }
 
+    pub fn set_hint(&mut self, index: usize, value: T, run_index_hint: usize) -> usize {
+        let hinted_run = &self.runs[run_index_hint];
+        let hinted_start = if run_index_hint > 0 { self.runs[run_index_hint - 1].end + 1 } else { 0 };
+        debug_assert!(hinted_start <= hinted_run.end);
+        if hinted_start <= index && hinted_run.end >= index {
+            self.set_internal(index, value, run_index_hint, hinted_start, hinted_run.end);
+            return run_index_hint;
+        }
+
+        // Fall back to a normal set if the hinted run index is wrong.
+        let (p, start, end) = self.index_info(index);
+        self.set_internal(index, value, p, start, end);
+        p
+    }
+
+    fn set_internal(&mut self, index: usize, value: T, mut p: usize, start: usize, end: usize) {
         if self.runs[p].value == value { return }
 
         // a size 1 run is replaced with the new value or joined with next or previous
