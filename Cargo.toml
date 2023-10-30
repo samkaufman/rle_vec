@@ -14,9 +14,8 @@ A vector like struct that stores data as runs of identical values. Useful for st
 """
 
 [features]
-serialize = ["serde", "serde_derive"]
+serialize = ["serde"]
 
 [dependencies]
-serde_derive = { version="1.0", optional=true }
-serde = { version="1.0", optional=true }
+serde = { version="1.0", optional=true, features=["derive"] }
 gapbuf = "0.1.4"

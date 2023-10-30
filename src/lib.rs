@@ -14,17 +14,17 @@
 //! |`RleVec`|O(1)|O(log&nbsp;n)|O((log&nbsp;n)&nbsp;+&nbsp;2n)|O(log&nbsp;n)|O((log&nbsp;n)&nbsp;+&nbsp;2n)|O((log&nbsp;n)&nbsp;+&nbsp;n)|
 //! |`Vec`|O(1)|O(1)|O(1)*| |O(n)| |
 //!
+extern crate gapbuf;
 #[cfg(feature = "serde")]
 extern crate serde;
-#[cfg(feature = "serde")]
-#[macro_use]
-extern crate serde_derive;
 
 use std::io;
 use std::iter::FromIterator;
 use std::iter::{once, repeat};
 use std::cmp;
+use std::marker::PhantomData;
 use std::ops::Index;
+use gapbuf::GapBuffer;
 
 /// The `RleVec` struct handles like a normal vector and supports a subset from the `Vec` methods.
 ///
@@ -122,10 +122,13 @@ use std::ops::Index;
 /// predict the number of runs required in your `RleVec`, it is recommended to use
 /// `RleVec::with_capacity` whenever possible to specify how many runs the `RleVec` is expected
 /// to store.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RleVec<T> {
-    runs: gapbuf::GapBuffer<InternalRun<T>>,
+    #[cfg_attr(feature = "serde", serde(serialize_with="serialize_gapbuf", deserialize_with="deserialize_gapbuf"))]
+    #[cfg_attr(feature = "serde", serde(bound(serialize = "T: serde::Serialize")))]
+    #[cfg_attr(feature = "serde", serde(bound(deserialize = "T: serde::Deserialize<'de>")))]
+    runs: GapBuffer<InternalRun<T>>,
 }
 
 /// Represent a run inside the `RleVec`, can be obtained from the [`runs`](struct.RleVec.html#method.runs). A run is a serie of the same value.
@@ -149,7 +152,7 @@ pub struct Run<T> {
     pub value: T,
 }
 
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 struct InternalRun<T> {
     end: usize,
@@ -168,7 +171,7 @@ impl<T> RleVec<T> {
     /// let rle = RleVec::<i32>::new();
     /// ```
     pub fn new() -> RleVec<T> {
-        RleVec { runs: gapbuf::GapBuffer::new() }
+        RleVec { runs: GapBuffer::new() }
     }
 
     /// Constructs a new empty `RleVec<T>` with capacity for the number of runs.
@@ -198,7 +201,7 @@ impl<T> RleVec<T> {
     /// rle.push(11);
     /// ```
     pub fn with_capacity(capacity: usize) -> RleVec<T> {
-        RleVec { runs: gapbuf::GapBuffer::with_capacity(capacity) }
+        RleVec { runs: GapBuffer::with_capacity(capacity) }
     }
 
     /// Returns the number of elements in the rle_vector.
@@ -724,7 +727,7 @@ impl<'a, T: Eq + Clone> From<&'a [T]> for RleVec<T> {
             return RleVec::new()
         }
 
-        let mut runs = gapbuf::GapBuffer::new();
+        let mut runs = GapBuffer::new();
         let mut last_value = slice[0].clone();
         for (i, v) in slice[1..].iter().enumerate() {
             if *v != last_value {
@@ -994,6 +997,58 @@ impl<'a, T: 'a> Iterator for Runs<'a, T> {
 }
 
 impl<'a, T: 'a> ExactSizeIterator for Runs<'a, T> { }
+
+#[cfg(feature = "serde")]
+struct GapBufferVisitor<T> {
+    _marker: PhantomData<T>,
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T> serde::de::Visitor<'de> for GapBufferVisitor<T>
+where
+    T: serde::Deserialize<'de>
+{
+    type Value = GapBuffer<T>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a GapBuffer")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<GapBuffer<T>, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let mut vec = GapBuffer::new();
+        while let Some(value) = seq.next_element()? {
+            vec.push_back(value);
+        }
+        Ok(vec)
+    }
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_gapbuf<'de, T, D>(deserializer: D) -> Result<GapBuffer<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    deserializer.deserialize_seq(GapBufferVisitor { _marker: PhantomData })
+}
+
+#[cfg(feature = "serde")]
+fn serialize_gapbuf<T, S>(value: &GapBuffer<T>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: serde::Serialize,
+    S: serde::Serializer,
+{
+    use serde::ser::SerializeSeq;
+
+    let mut seq = serializer.serialize_seq(Some(value.len()))?;
+    for element in value.iter() {
+        seq.serialize_element(element)?;
+    }
+    seq.end()
+}
 
 #[cfg(test)]
 mod tests {
