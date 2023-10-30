@@ -561,12 +561,13 @@ impl<T: Eq + Clone> RleVec<T> {
     }
 
     pub fn set_hint(&mut self, index: usize, value: T, run_index_hint: usize) -> usize {
-        let hinted_run = &self.runs[run_index_hint];
-        let hinted_start = if run_index_hint > 0 { self.runs[run_index_hint - 1].end + 1 } else { 0 };
-        debug_assert!(hinted_start <= hinted_run.end);
-        if hinted_start <= index && hinted_run.end >= index {
-            self.set_internal(index, value, run_index_hint, hinted_start, hinted_run.end);
-            return run_index_hint;
+        if let Some(hinted_run) = self.runs.get(run_index_hint) {
+            let hinted_start = if run_index_hint > 0 { self.runs[run_index_hint - 1].end + 1 } else { 0 };
+            debug_assert!(hinted_start <= hinted_run.end);
+            if hinted_start <= index && hinted_run.end >= index {
+                self.set_internal(index, value, run_index_hint, hinted_start, hinted_run.end);
+                return run_index_hint;
+            }
         }
 
         // Fall back to a normal set if the hinted run index is wrong.
