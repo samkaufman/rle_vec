@@ -125,7 +125,7 @@ use std::ops::Index;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RleVec<T> {
-    runs: Vec<InternalRun<T>>,
+    runs: gapbuf::GapBuffer<InternalRun<T>>,
 }
 
 /// Represent a run inside the `RleVec`, can be obtained from the [`runs`](struct.RleVec.html#method.runs). A run is a serie of the same value.
@@ -168,7 +168,7 @@ impl<T> RleVec<T> {
     /// let rle = RleVec::<i32>::new();
     /// ```
     pub fn new() -> RleVec<T> {
-        RleVec { runs: Vec::new() }
+        RleVec { runs: gapbuf::GapBuffer::new() }
     }
 
     /// Constructs a new empty `RleVec<T>` with capacity for the number of runs.
@@ -198,7 +198,7 @@ impl<T> RleVec<T> {
     /// rle.push(11);
     /// ```
     pub fn with_capacity(capacity: usize) -> RleVec<T> {
-        RleVec { runs: Vec::with_capacity(capacity) }
+        RleVec { runs: gapbuf::GapBuffer::with_capacity(capacity) }
     }
 
     /// Returns the number of elements in the rle_vector.
@@ -214,7 +214,7 @@ impl<T> RleVec<T> {
     /// assert_eq!(rle.len(), 3);
     /// ```
     pub fn len(&self) -> usize {
-        match self.runs.last() {
+        match self.runs_last() {
             Some(run) => run.end + 1,
             None => 0,
         }
@@ -263,7 +263,7 @@ impl<T> RleVec<T> {
     /// assert_eq!(rle.last(), None);
     /// ```
     pub fn last(&self) -> Option<&T> {
-        match self.runs.last() {
+        match self.runs_last() {
             Some(last) => Some(&last.value),
             None => None,
         }
@@ -296,7 +296,7 @@ impl<T> RleVec<T> {
             self.runs[self.runs.len() - 2].end + 1
         } else { 0 };
 
-        match self.runs.last() {
+        match self.runs_last() {
             Some(last) => Some(Run {
                 len: last.end + 1 - previous_end,
                 value: &last.value
@@ -402,19 +402,56 @@ impl<T> RleVec<T> {
     }
 
     fn run_index(&self, index: usize) -> usize {
-        match self.runs.binary_search_by(|run| run.end.cmp(&index)) {
-            Ok(i) => i,
-            Err(i) if i < self.runs.len() => i,
-            _ => panic!("index out of bounds: the len is {} but the index is {}", self.len(), index)
+        let (lesser_slice, greater_slice) = self.runs.as_slices();
+
+        let target_slice ;
+        let slice_offset;
+        if let Some(last_lesser_run) = lesser_slice.last() {
+            if index <= last_lesser_run.end {
+                target_slice = lesser_slice;
+                slice_offset = 0;
+            } else {
+                target_slice = greater_slice;
+                slice_offset = lesser_slice.len();
+            }
+        } else {
+            target_slice = greater_slice;
+            slice_offset = 0;
         }
+
+        let within_slice_result = match target_slice.binary_search_by(|run| run.end.cmp(&index)) {
+            Ok(i) => i,
+            Err(i) if i < target_slice.len() => i,
+            _ => panic!("index out of bounds: the len is {} but the index is {}", self.len(), index)
+        };
+        within_slice_result + slice_offset
     }
 
     fn index_info(&self, index: usize) -> (usize, usize, usize) {
         match self.run_index(index) {
             0 => (0, 0, self.runs[0].end),
-            index => (index, self.runs[index - 1].end + 1, self.runs[index].end),
+            index => {
+                (index, self.runs[index - 1].end + 1, self.runs[index].end)
+            },
         }
     }
+
+    fn runs_last(&self) -> Option<&InternalRun<T>> {
+        let runs_length = self.runs.len();
+        if runs_length == 0 {
+            return None;
+        }
+        self.runs.get(runs_length - 1)
+    }
+
+    fn runs_last_mut(&mut self) -> Option<&mut InternalRun<T>> {
+        let runs_length = self.runs.len();
+        if runs_length == 0 {
+            return None;
+        }
+        self.runs.get_mut(runs_length - 1)
+    }
+
 }
 
 impl<T: Eq> RleVec<T> {
@@ -452,13 +489,13 @@ impl<T: Eq> RleVec<T> {
     pub fn push_n(&mut self, n: usize, value: T) {
         if n == 0 { return; }
 
-        let end = match self.runs.last_mut() {
+        let end = match self.runs_last_mut() {
             Some(ref mut last) if last.value == value => return last.end += n,
             Some(last) => last.end + n,
             None => n - 1,
         };
 
-        self.runs.push(InternalRun { value, end });
+        self.runs.push_back(InternalRun { value, end });
     }
 }
 
@@ -601,7 +638,7 @@ impl<T: Eq + Clone> RleVec<T> {
     pub fn remove(&mut self, index: usize) -> T {
         let (p, start, end) = self.index_info(index);
 
-        for run in self.runs[p..].iter_mut() {
+        for run in self.runs.range_mut(p..).iter_mut() {
             run.end -= 1;
         }
 
@@ -643,7 +680,7 @@ impl<T: Eq + Clone> RleVec<T> {
 
         let (p, start, end) = self.index_info(index);
         // increment all run ends from position p
-        for run in self.runs[p..].iter_mut() {
+        for run in self.runs.range_mut(p..).iter_mut() {
             run.end += 1;
         }
 
@@ -687,11 +724,11 @@ impl<'a, T: Eq + Clone> From<&'a [T]> for RleVec<T> {
             return RleVec::new()
         }
 
-        let mut runs = Vec::new();
+        let mut runs = gapbuf::GapBuffer::new();
         let mut last_value = slice[0].clone();
         for (i, v) in slice[1..].iter().enumerate() {
             if *v != last_value {
-                runs.push(InternalRun{
+                runs.push_back(InternalRun{
                     end: i,
                     value: last_value,
                 });
@@ -699,7 +736,7 @@ impl<'a, T: Eq + Clone> From<&'a [T]> for RleVec<T> {
             }
         }
 
-        runs.push(InternalRun{
+        runs.push_back(InternalRun{
             end: slice.len() - 1,
             value: last_value,
         });
@@ -740,7 +777,7 @@ impl<T: Eq> Extend<T> for RleVec<T> {
             // In order te possibly longer use the last run for extending the run-end we do not use the
             // push function to add values. This gives higher performance to extending the RleVec
             // with data consisting of large runs.
-            let (pop, end) = if let Some(last_run) = self.runs.last() {
+            let (pop, end) = if let Some(last_run) = self.runs_last() {
                 if last_run.value == next_value {
                     (true, last_run.end + 1)
                 } else {
@@ -751,7 +788,7 @@ impl<T: Eq> Extend<T> for RleVec<T> {
             };
 
             let mut rle_last = if pop {
-                let mut run = self.runs.pop().unwrap();
+                let mut run = self.runs.pop_back().unwrap();
                 run.end = end;
                 run
             } else {
@@ -761,12 +798,12 @@ impl<T: Eq> Extend<T> for RleVec<T> {
             for value in iter {
                 if value != rle_last.value {
                     let next_end = rle_last.end;
-                    self.runs.push(rle_last);
+                    self.runs.push_back(rle_last);
                     rle_last = InternalRun { value, end: next_end };
                 }
                 rle_last.end += 1;
             }
-            self.runs.push(rle_last);
+            self.runs.push_back(rle_last);
         }
     }
 }

@@ -19,3 +19,4 @@ serialize = ["serde", "serde_derive"]
 [dependencies]
 serde_derive = { version="1.0", optional=true }
 serde = { version="1.0", optional=true }
+gapbuf = "0.1.4"
