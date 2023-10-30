@@ -404,6 +404,10 @@ impl<T> RleVec<T> {
         Runs { rle: self, run_index: 0, last_end: 0 }
     }
 
+    pub fn shrink_to_fit(&mut self) {
+        self.runs.shrink_to_fit();
+    }
+
     fn run_index(&self, index: usize) -> usize {
         let (lesser_slice, greater_slice) = self.runs.as_slices();
 
