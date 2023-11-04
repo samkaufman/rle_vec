@@ -18,10 +18,11 @@ extern crate gapbuf;
 #[cfg(feature = "serde")]
 extern crate serde;
 
-use std::io;
-use std::iter::FromIterator;
-use std::iter::{once, repeat};
 use std::cmp;
+use std::convert::{TryFrom, TryInto};
+use std::io;
+use std::iter::{once, repeat};
+use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::Index;
 use gapbuf::GapBuffer;
@@ -147,7 +148,7 @@ pub struct RleVec<T> {
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Run<T> {
     /// The length of this run.
-    pub len: usize,
+    pub len: u32,
     /// The value of this run.
     pub value: T,
 }
@@ -155,7 +156,7 @@ pub struct Run<T> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 struct InternalRun<T> {
-    end: usize,
+    end: u32,
     value: T,
 }
 
@@ -218,7 +219,7 @@ impl<T> RleVec<T> {
     /// ```
     pub fn len(&self) -> usize {
         match self.runs_last() {
-            Some(run) => run.end + 1,
+            Some(run) => usize::try_from(run.end).unwrap() + 1,
             None => 0,
         }
     }
@@ -343,13 +344,13 @@ impl<T> RleVec<T> {
     /// let starts = rle.starts();
     /// assert_eq!(starts, vec![0, 2, 4]);
     /// ```
-    pub fn starts(&self) -> Vec<usize> {
+    pub fn starts(&self) -> Vec<u32> {
         if self.is_empty() { return Vec::new() }
         once(0).chain(self.runs.iter().take(self.runs_len() - 1).map(|r| r.end + 1)).collect()
     }
 
     /// Returns the 0-based end coordinates of the runs
-    pub fn ends(&self) -> Vec<usize> {
+    pub fn ends(&self) -> Vec<u32> {
         self.runs.iter().map(|r| r.end).collect()
     }
 
@@ -377,8 +378,8 @@ impl<T> RleVec<T> {
             rle: self,
             run_index: 0,
             index: 0,
-            run_index_back: self.runs.len().saturating_sub(1),
-            index_back: self.len(), // starts out of range
+            run_index_back: self.runs.len().saturating_sub(1).try_into().unwrap(),
+            index_back: self.len().try_into().unwrap(), // starts out of range
         }
     }
 
@@ -408,7 +409,7 @@ impl<T> RleVec<T> {
         self.runs.shrink_to_fit();
     }
 
-    fn run_index(&self, index: usize) -> usize {
+    fn run_index(&self, index: u32) -> usize {
         let (lesser_slice, greater_slice) = self.runs.as_slices();
 
         let target_slice ;
@@ -434,9 +435,9 @@ impl<T> RleVec<T> {
         within_slice_result + slice_offset
     }
 
-    fn index_info(&self, index: usize) -> (usize, usize, usize) {
+    fn index_info(&self, index: u32) -> (usize, u32, u32) {
         match self.run_index(index) {
-            0 => (0, 0, self.runs[0].end),
+            0 => (0, 0, self.runs[0].end.try_into().unwrap()),
             index => {
                 (index, self.runs[index - 1].end + 1, self.runs[index].end)
             },
@@ -493,7 +494,7 @@ impl<T: Eq> RleVec<T> {
     /// rle.push_n(10, 2);
     /// assert_eq!(rle[9], 2);
     /// ```
-    pub fn push_n(&mut self, n: usize, value: T) {
+    pub fn push_n(&mut self, n: u32, value: T) {
         if n == 0 { return; }
 
         let end = match self.runs_last_mut() {
@@ -526,7 +527,7 @@ impl<T: Clone> RleVec<T> {
         let mut p = 0;
         for r in &self.runs {
             let n = r.end - p + 1;
-            res.extend(repeat(r.value.clone()).take(n));
+            res.extend(repeat(r.value.clone()).take(n.try_into().unwrap()));
             p += n;
         }
         res
@@ -556,11 +557,14 @@ impl<T: Eq + Clone> RleVec<T> {
     /// assert_eq!(rle.runs_len(), 5);
     /// ```
     pub fn set(&mut self, index: usize, value: T) {
+        let index = u32::try_from(index).unwrap();
         let (p, start, end) = self.index_info(index);
         self.set_internal(index, value, p, start, end);
     }
 
     pub fn set_hint(&mut self, index: usize, value: T, run_index_hint: usize) -> usize {
+        let index = u32::try_from(index).unwrap();
+
         if let Some(hinted_run) = self.runs.get(run_index_hint) {
             let hinted_start = if run_index_hint > 0 { self.runs[run_index_hint - 1].end + 1 } else { 0 };
             debug_assert!(hinted_start <= hinted_run.end);
@@ -576,7 +580,7 @@ impl<T: Eq + Clone> RleVec<T> {
         p
     }
 
-    fn set_internal(&mut self, index: usize, value: T, mut p: usize, start: usize, end: usize) {
+    fn set_internal(&mut self, index: u32, value: T, mut p: usize, start: u32, end: u32) {
         if self.runs[p].value == value { return }
 
         // a size 1 run is replaced with the new value or joined with next or previous
@@ -643,7 +647,7 @@ impl<T: Eq + Clone> RleVec<T> {
     /// assert_eq!(rle.runs_len(), 2);
     /// assert_eq!(rle.to_vec(), vec![1, 1, 1, 1, 1, 1, 4, 4]);
     /// ```
-    pub fn remove(&mut self, index: usize) -> T {
+    pub fn remove(&mut self, index: u32) -> T {
         let (p, start, end) = self.index_info(index);
 
         for run in self.runs.range_mut(p..).iter_mut() {
@@ -686,6 +690,8 @@ impl<T: Eq + Clone> RleVec<T> {
             return self.push(value);
         }
 
+        let index = u32::try_from(index).unwrap();
+
         let (p, start, end) = self.index_info(index);
         // increment all run ends from position p
         for run in self.runs.range_mut(p..).iter_mut() {
@@ -716,7 +722,7 @@ impl<T> Index<usize> for RleVec<T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &T {
-        &self.runs[self.run_index(index)].value
+        &self.runs[self.run_index(index.try_into().unwrap())].value
     }
 }
 
@@ -737,7 +743,7 @@ impl<'a, T: Eq + Clone> From<&'a [T]> for RleVec<T> {
         for (i, v) in slice[1..].iter().enumerate() {
             if *v != last_value {
                 runs.push_back(InternalRun{
-                    end: i,
+                    end: i.try_into().unwrap(),
                     value: last_value,
                 });
                 last_value = v.clone();
@@ -745,7 +751,7 @@ impl<'a, T: Eq + Clone> From<&'a [T]> for RleVec<T> {
         }
 
         runs.push_back(InternalRun{
-            end: slice.len() - 1,
+            end: (slice.len() - 1).try_into().unwrap(),
             value: last_value,
         });
 
@@ -819,7 +825,7 @@ impl<T: Eq> Extend<T> for RleVec<T> {
 impl<T: Eq> Extend<Run<T>> for RleVec<T> {
     fn extend<I>(&mut self, iter: I) where I: IntoIterator<Item=Run<T>> {
         for Run{ len, value } in iter {
-            self.push_n(len, value)
+            self.push_n(len.try_into().unwrap(), value)
         }
     }
 }
@@ -859,10 +865,10 @@ impl io::Write for RleVec<u8> {
 /// ```
 pub struct Iter<'a, T: 'a> {
     rle: &'a RleVec<T>,
-    run_index: usize,
-    index: usize,
-    index_back: usize,
-    run_index_back: usize,
+    run_index: u32,
+    index: u32,
+    index_back: u32,
+    run_index_back: u32,
 }
 
 impl<'a, T: 'a> IntoIterator for &'a RleVec<T> {
@@ -874,8 +880,8 @@ impl<'a, T: 'a> IntoIterator for &'a RleVec<T> {
             rle: self,
             run_index: 0,
             index: 0,
-            run_index_back: self.runs.len().saturating_sub(1),
-            index_back: self.len(), // starts out of range
+            run_index_back: self.runs.len().saturating_sub(1).try_into().unwrap(),
+            index_back: self.len().try_into().unwrap(), // starts out of range
         }
     }
 }
@@ -887,7 +893,7 @@ impl<'a, T: 'a> Iterator for Iter<'a, T> {
         if self.index == self.index_back {
             return None
         }
-        let run = &self.rle.runs[self.run_index];
+        let run = &self.rle.runs[self.run_index.try_into().unwrap()];
         self.index += 1;
         if self.index > run.end {
             self.run_index += 1;
@@ -896,7 +902,7 @@ impl<'a, T: 'a> Iterator for Iter<'a, T> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.rle.len() - self.index;
+        let len = self.rle.len() - usize::try_from(self.index).unwrap();
         (len, Some(len))
     }
 
@@ -906,19 +912,21 @@ impl<'a, T: 'a> Iterator for Iter<'a, T> {
     }
 
     fn last(self) -> Option<Self::Item> {
-        if self.index == self.rle.len() {
+        if self.index == u32::try_from(self.rle.len()).unwrap() {
             return None
         }
         self.rle.last()
     }
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
-        self.index = cmp::min(self.index + n, self.rle.len());
-        self.run_index = if self.index < self.rle.len() {
+        let rle_len_u32 = u32::try_from(self.rle.len()).unwrap();
+        self.index = cmp::min(self.index + u32::try_from(n).unwrap(), rle_len_u32);
+        let new_run_index = if self.index < rle_len_u32 {
             self.rle.run_index(self.index)
         } else {
             self.rle.runs.len() - 1
         };
+        self.run_index = new_run_index.try_into().unwrap();
         self.next()
     }
 }
@@ -931,10 +939,10 @@ impl<'a, T: 'a> DoubleEndedIterator for Iter<'a, T> {
             return None
         }
         self.index_back -= 1;
-        if self.run_index_back > 0 && self.index_back <= self.rle.runs[self.run_index_back - 1].end {
+        if self.run_index_back > 0 && self.index_back <= self.rle.runs[(self.run_index_back - 1).try_into().unwrap()].end {
             self.run_index_back -= 1;
         }
-        Some(&self.rle.runs[self.run_index_back].value)
+        Some(&self.rle.runs[self.run_index_back.try_into().unwrap()].value)
     }
 }
 
@@ -958,7 +966,7 @@ impl<'a, T: 'a> DoubleEndedIterator for Iter<'a, T> {
 pub struct Runs<'a, T:'a> {
     rle: &'a RleVec<T>,
     run_index: usize,
-    last_end: usize,
+    last_end: u32,
 }
 
 impl<'a, T: 'a> Iterator for Runs<'a, T> {
