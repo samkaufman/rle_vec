@@ -491,7 +491,7 @@ impl<T: Clone> RleVec<T> {
 
 impl<T: Eq + Clone> RleVec<T> {
     /// Return the value at index, along with the run index.
-    fn get_ext(&self, index: usize) -> (&T, usize) {
+    pub fn get_ext(&self, index: usize) -> (&T, usize) {
         let run_index = self.run_index(index);
         (&self.runs[run_index].value, run_index)
     }
