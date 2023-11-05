@@ -536,9 +536,16 @@ impl<T: Clone> RleVec<T> {
 
 impl<T: Eq + Clone> RleVec<T> {
     /// Return the value at index, along with the run index.
-    pub fn get_ext(&self, index: u32) -> (&T, usize) {
-        let run_index = self.run_index(index);
-        (&self.runs[run_index].value, run_index)
+    pub fn get_hint(&self, index: u32, run_index_hint: usize) -> (&T, usize) {
+        let hinted_run = &self.runs[run_index_hint];
+        let hinted_start = if run_index_hint > 0 { self.runs[run_index_hint - 1].end + 1 } else { 0 };
+        debug_assert!(hinted_start <= hinted_run.end);
+        if hinted_start <= index && hinted_run.end >= index {
+            (&hinted_run.value, run_index_hint)
+        } else {
+            let run_index = self.run_index(index);
+            (&self.runs[run_index].value, run_index)
+        }
     }
 
     /// Modify the value at given index.
