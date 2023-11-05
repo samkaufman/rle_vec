@@ -535,6 +535,12 @@ impl<T: Clone> RleVec<T> {
 }
 
 impl<T: Eq + Clone> RleVec<T> {
+    /// Return the value at index, along with the run index.
+    pub fn get_ext(&self, index: u32) -> (&T, usize) {
+        let run_index = self.run_index(index);
+        (&self.runs[run_index].value, run_index)
+    }
+
     /// Modify the value at given index.
     ///
     /// This can result in the breaking of a run and therefore be an expensive operation.
