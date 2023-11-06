@@ -633,7 +633,6 @@ impl<T: Eq + Clone> RleVec<T> {
                     self.runs.insert(start_run_idx + 1, InternalRun { end, value });
                 },
                 (false, false) => {
-                    debug_assert!(value != self.runs[start_run_idx].value);
                     let existing = self.runs[start_run_idx].clone();
                     debug_assert!(existing.end > end);
                     self.runs[start_run_idx].end = start - 1;
