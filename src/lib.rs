@@ -646,6 +646,96 @@ impl<T: Eq + Clone> RleVec<T> {
         }
     }
 
+    pub fn set_range(&mut self, mut start: u32, len: u32, value: T) {
+        if len == 0 { return; }
+        if len == 1 { return self.set(usize::try_from(start).unwrap(), value); }
+
+        let mut end = start + len - 1;  // end is inclusive
+
+        // Adjust `start` for merges with the previous run if values match.
+        let (left_run_idx, left_run_start, left_run_end) = self.index_info(start);
+        let mut start_run_idx = left_run_idx;
+        let mut end_run_idx = left_run_idx;
+        if start == left_run_start && left_run_idx > 0 && self.runs[left_run_idx - 1].value == value {
+            if left_run_idx == 1 {
+                start_run_idx = 0;
+                start = 0;
+            } else {
+                start_run_idx = left_run_idx - 1;
+                start = self.runs[left_run_idx - 2].end + 1;
+            }
+        }
+
+        // Adjust `end` for merges with the next run if values match.
+        // TODO: These two branches share a lot of code. Consolidate.
+        if end <= left_run_end {
+            if left_run_end == end && left_run_idx + 1 < self.runs.len() && self.runs[left_run_idx + 1].value == value {
+                end_run_idx += 1;
+                end = self.runs[end_run_idx].end;
+            }
+        } else {
+            let (right_run_idx, _, right_run_end) = self.index_info(end);
+            end_run_idx = right_run_idx;
+            if right_run_end == end && right_run_idx + 1 < self.runs.len() && self.runs[right_run_idx + 1].value == value {
+                end_run_idx += 1;
+                end = self.runs[end_run_idx].end;
+            }
+        }
+
+        self.set_range_internal(start, start_run_idx, end, end_run_idx, value)
+    }
+
+    /// Sets the value of the range `start..=end` to the given value.
+    /// 
+    /// Assumes that there are no ranges-to-merge before or after the given range.
+    fn set_range_internal(&mut self, start: u32, start_run_idx: usize, end: u32, end_run_idx: usize, value: T) {
+        debug_assert!(end >= start);
+        debug_assert!(end_run_idx >= start_run_idx);
+
+        let flush_left = if start_run_idx == 0 {
+            start == 0
+        } else {
+            start == self.runs[start_run_idx - 1].end + 1
+        };
+        let flush_right = end == self.runs[end_run_idx].end;
+
+        if start_run_idx == end_run_idx {
+            match (flush_left, flush_right) {
+                (true, true) => {
+                    self.runs[start_run_idx].value = value;
+                },
+                (true, false) => {
+                    debug_assert!(end < self.runs[start_run_idx].end);
+                    self.runs.insert(start_run_idx, InternalRun { end, value });
+                },
+                (false, true) => {
+                    self.runs[start_run_idx].end = start - 1;
+                    self.runs.insert(start_run_idx + 1, InternalRun { end, value });
+                },
+                (false, false) => {
+                    debug_assert!(value != self.runs[start_run_idx].value);
+                    let existing = self.runs[start_run_idx].clone();
+                    debug_assert!(existing.end > end);
+                    self.runs[start_run_idx].end = start - 1;
+                    self.runs.splice((start_run_idx + 1)..(start_run_idx + 1), [
+                        InternalRun { value, end }, existing]);
+                },
+            };
+        } else {
+            let range_to_replace = match (flush_left, flush_right) {
+                (true, true) => start_run_idx..(end_run_idx + 1),
+                (true, false) =>  start_run_idx..end_run_idx,
+                (false, true) =>  (start_run_idx + 1)..(end_run_idx + 1),
+                (false, false) => (start_run_idx + 1)..end_run_idx
+            };
+            self.runs.splice(range_to_replace, [InternalRun { value, end }]);
+            if !flush_left {
+                self.runs[start_run_idx].end = start - 1;
+            }
+        }
+    }
+
+
     /// Removes and returns the element at position index, shifting all elements after it to the left.
     ///
     /// # Panics
@@ -1223,6 +1313,76 @@ mod tests {
         rle.set(10, 4);
         assert_eq!(rle.to_vec(), vec![1,1,2,4,3,3,3,3,7,4, 4]);
         assert_eq!(rle.runs_len(), 6);
+    }
+
+    #[test]
+    fn set_ranges() {
+        let mut rle = RleVec::from(&[1, 1, 2, 2, 3][..]);
+        rle.set_range(3, 2, 4);
+        assert_eq!(rle.to_vec(), vec![1, 1, 2, 4, 4]);
+        assert_postconditions(&rle);
+        rle.set_range(0, 1, 0);
+        assert_eq!(rle.to_vec(), vec![0, 1, 2, 4, 4]);
+        assert_postconditions(&rle);
+        rle.set_range(0, 2, 2);
+        assert_eq!(rle.to_vec(), vec![2, 2, 2, 4, 4]);
+        assert_postconditions(&rle);
+        rle.set_range(0, 2, 1);
+        assert_eq!(rle.to_vec(), vec![1, 1, 2, 4, 4]);
+        assert_postconditions(&rle);
+        rle.set_range(2, 2, 3);
+        assert_eq!(rle.to_vec(), vec![1, 1, 3, 3, 4]);
+        assert_postconditions(&rle);
+        rle.set_range(4, 1, 3);
+        assert_eq!(rle.to_vec(), vec![1, 1, 3, 3, 3]);
+        assert_postconditions(&rle);
+        rle.set_range(0, 5, 0);
+        assert_eq!(rle.to_vec(), vec![0, 0, 0, 0, 0]);
+        assert_postconditions(&rle);
+        rle.set_range(1, 2, 1);
+        assert_eq!(rle.to_vec(), vec![0, 1, 1, 0, 0]);
+        assert_postconditions(&rle);
+        rle.set_range(4, 1, 2);
+        assert_eq!(rle.to_vec(), vec![0, 1, 1, 0, 2]);
+        assert_postconditions(&rle);
+        rle.set_range(1, 2, 0);
+        assert_eq!(rle.to_vec(), vec![0, 0, 0, 0, 2]);
+        assert_postconditions(&rle);
+        rle.set_range(4, 1, 0);
+        assert_eq!(rle.to_vec(), vec![0, 0, 0, 0, 0]);
+        assert_postconditions(&rle);
+
+        let mut rle2 = RleVec::from(&[0, 1, 2, 3, 3][..]);
+        rle2.set_range(3, 2, 2);
+        assert_eq!(rle2.to_vec(), vec![0, 1, 2, 2, 2]);
+        assert_postconditions(&rle2);
+        rle2.set_range(2, 3, 3);
+        assert_eq!(rle2.to_vec(), vec![0, 1, 3, 3, 3]);
+        assert_postconditions(&rle2);
+        rle2.set_range(3, 2, 4);
+        assert_eq!(rle2.to_vec(), vec![0, 1, 3, 4, 4]);
+        assert_postconditions(&rle2);
+    }
+
+    fn assert_postconditions<T: Eq>(rle: &RleVec<T>) {
+        assert!(rle.runs[0].end < rle.len().try_into().unwrap());
+        for i in 1..rle.runs.len() {
+            assert!(rle.runs[i].end < rle.len().try_into().unwrap());
+            assert!(rle.runs[i - 1].end < rle.runs[i].end);
+            assert!(rle.runs[i - 1].value != rle.runs[i].value);
+        }
+    }
+
+    #[test]
+    fn set_single_value_range_matches_set() {
+        let rle = RleVec::from(&[1, 1, 2, 2, 3][..]);
+        for i in 0..rle.len() {
+            let mut rle2 = rle.clone();
+            let mut rle3 = rle.clone();
+            rle2.set_range(u32::try_from(i).unwrap(), 1, 4);
+            rle3.set(i, 4);
+            assert_eq!(rle2.to_vec(), rle3.to_vec());
+        }
     }
 
     #[test]
