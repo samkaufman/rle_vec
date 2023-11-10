@@ -141,12 +141,14 @@ pub struct RleVec<T> {
 /// let rle = RleVec::from(&[1, 1, 1, 1, 2, 2, 3][..]);
 ///
 /// let mut iterator = rle.runs();
-/// assert_eq!(iterator.next(), Some(Run{ len: 4, value: &1 }));
-/// assert_eq!(iterator.next(), Some(Run{ len: 2, value: &2 }));
-/// assert_eq!(iterator.next(), Some(Run{ len: 1, value: &3 }));
+/// assert_eq!(iterator.next(), Some(Run{ start: 0, len: 4, value: &1 }));
+/// assert_eq!(iterator.next(), Some(Run{ start: 4, len: 2, value: &2 }));
+/// assert_eq!(iterator.next(), Some(Run{ start: 6, len: 1, value: &3 }));
 /// ```
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Run<T> {
+    /// The index of the first value in this run. 
+    pub start: u32,
     /// The length of this run.
     pub len: u32,
     /// The value of this run.
@@ -287,22 +289,23 @@ impl<T> RleVec<T> {
     /// rle.push(1);
     /// rle.push(1);
     ///
-    /// assert_eq!(rle.last_run(), Some(Run{ len: 4, value: &1 }));
+    /// assert_eq!(rle.last_run(), Some(Run{ start: 0, len: 4, value: &1 }));
     ///
     /// rle.push(2);
     /// rle.push(2);
     /// rle.push(3);
     ///
-    /// assert_eq!(rle.last_run(), Some(Run{ len: 1, value: &3 }));
+    /// assert_eq!(rle.last_run(), Some(Run{ start: 6, len: 1, value: &3 }));
     /// ```
     pub fn last_run(&self) -> Option<Run<&T>> {
-        let previous_end = if self.runs.len() >= 2 {
+        let start = if self.runs.len() >= 2 {
             self.runs[self.runs.len() - 2].end + 1
         } else { 0 };
 
         match self.runs_last() {
             Some(last) => Some(Run {
-                len: last.end + 1 - previous_end,
+                start,
+                len: last.end + 1 - start,
                 value: &last.value
             }),
             None => None,
@@ -396,9 +399,9 @@ impl<T> RleVec<T> {
     ///
     /// let mut iterator = rle.runs();
     ///
-    /// assert_eq!(iterator.next(), Some(Run{ len: 2, value: &1 }));
-    /// assert_eq!(iterator.next(), Some(Run{ len: 1, value: &2 }));
-    /// assert_eq!(iterator.next(), Some(Run{ len: 1, value: &3 }));
+    /// assert_eq!(iterator.next(), Some(Run{ start: 0, len: 2, value: &1 }));
+    /// assert_eq!(iterator.next(), Some(Run{ start: 2, len: 1, value: &2 }));
+    /// assert_eq!(iterator.next(), Some(Run{ start: 3, len: 1, value: &3 }));
     /// assert_eq!(iterator.next(), None);
     /// ```
     pub fn runs(&self) -> Runs<T> {
@@ -926,8 +929,8 @@ impl<T: Eq> Extend<T> for RleVec<T> {
 
 impl<T: Eq> Extend<Run<T>> for RleVec<T> {
     fn extend<I>(&mut self, iter: I) where I: IntoIterator<Item=Run<T>> {
-        for Run{ len, value } in iter {
-            self.push_n(len.try_into().unwrap(), value)
+        for Run{ start: _, len, value } in iter {
+            self.push_n(len, value)
         }
     }
 }
@@ -1060,9 +1063,9 @@ impl<'a, T: 'a> DoubleEndedIterator for Iter<'a, T> {
 /// let rle = RleVec::from(&[1, 1, 1, 1, 2, 2, 3][..]);
 ///
 /// let mut iterator = rle.runs();
-/// assert_eq!(iterator.next(), Some(Run{ len: 4, value: &1 }));
-/// assert_eq!(iterator.next(), Some(Run{ len: 2, value: &2 }));
-/// assert_eq!(iterator.next(), Some(Run{ len: 1, value: &3 }));
+/// assert_eq!(iterator.next(), Some(Run{ start: 0, len: 4, value: &1 }));
+/// assert_eq!(iterator.next(), Some(Run{ start: 4, len: 2, value: &2 }));
+/// assert_eq!(iterator.next(), Some(Run{ start: 6, len: 1, value: &3 }));
 /// assert_eq!(iterator.next(), None);
 /// ```
 pub struct Runs<'a, T:'a> {
@@ -1078,11 +1081,16 @@ impl<'a, T: 'a> Iterator for Runs<'a, T> {
         if self.run_index == self.rle.runs.len() {
             return None
         }
+        let start = if self.run_index == 0 {
+            0
+        } else {
+            self.last_end
+        };
         let &InternalRun { ref value, end } = self.rle.runs.index(self.run_index);
         let len = end - self.last_end + 1;
         self.run_index += 1;
         self.last_end = end + 1;
-        Some(Run { len, value })
+        Some(Run { start, len, value })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -1181,17 +1189,17 @@ mod tests {
         let rle: RleVec<i32> = RleVec::from(&[1][..]);
         assert_eq!(rle.to_vec(), vec![1]);
         let runs: Vec<_> = rle.runs().collect();
-        assert_eq!(runs, vec![Run{ len: 1, value: &1 }]);
+        assert_eq!(runs, vec![Run{ start: 0, len: 1, value: &1 }]);
 
         let rle: RleVec<i32> = RleVec::from(&[1, 2][..]);
         assert_eq!(rle.to_vec(), vec![1, 2]);
         let runs: Vec<_> = rle.runs().collect();
-        assert_eq!(runs, vec![Run{ len: 1, value: &1 }, Run { len: 1, value: &2 }]);
+        assert_eq!(runs, vec![Run{ start: 0, len: 1, value: &1 }, Run { start: 1, len: 1, value: &2 }]);
 
         let rle: RleVec<i32> = RleVec::from(&[1, 1][..]);
         assert_eq!(rle.to_vec(), vec![1, 1]);
         let runs: Vec<_> = rle.runs().collect();
-        assert_eq!(runs, vec![Run{ len: 2, value: &1 }]);
+        assert_eq!(runs, vec![Run{ start: 0, len: 2, value: &1 }]);
 
         // from iter
 
@@ -1203,18 +1211,18 @@ mod tests {
         let rle: RleVec<i32> = RleVec::from_iter(1..2);
         assert_eq!(rle.to_vec(), vec![1]);
         let runs: Vec<_> = rle.runs().collect();
-        assert_eq!(runs, vec![Run{ len: 1, value: &1 }]);
+        assert_eq!(runs, vec![Run{ start: 0, len: 1, value: &1 }]);
 
         let rle: RleVec<i32> = RleVec::from_iter(1..3);
         assert_eq!(rle.to_vec(), vec![1, 2]);
         let runs: Vec<_> = rle.runs().collect();
-        assert_eq!(runs, vec![Run{ len: 1, value: &1 }, Run { len: 1, value: &2 }]);
+        assert_eq!(runs, vec![Run{ start: 0, len: 1, value: &1 }, Run { start: 1, len: 1, value: &2 }]);
 
         use std::iter::repeat;
         let rle: RleVec<i32> = RleVec::from_iter(repeat(1).take(2));
         assert_eq!(rle.to_vec(), vec![1, 1]);
         let runs: Vec<_> = rle.runs().collect();
-        assert_eq!(runs, vec![Run{ len: 2, value: &1 }]);
+        assert_eq!(runs, vec![Run{ start: 0, len: 2, value: &1 }]);
     }
 
     #[test]
@@ -1241,7 +1249,7 @@ mod tests {
         assert_eq!(rle.len(), 16);
         assert_eq!(rle.runs_len(), 5);
         assert_eq!(rle.last(), Some(&5));
-        assert_eq!(rle.last_run(), Some(Run {value: &5, len: 3}));
+        assert_eq!(rle.last_run(), Some(Run {start: 13, value: &5, len: 3}));
         rle.clear();
         assert_eq!(rle.len(), 0);
         assert_eq!(rle.runs_len(), 0);
@@ -1512,7 +1520,7 @@ mod tests {
             copy.push_n(r.len, r.value.clone());
         }
         assert_eq!(copy.iter().cloned().collect::<Vec<_>>(), v);
-        let copy2: RleVec<i32> = rle.runs().map(|r| Run { value: r.value.clone(), len: r.len }).collect();
+        let copy2: RleVec<i32> = rle.runs().map(|r| Run { start: r.start, value: r.value.clone(), len: r.len }).collect();
         assert_eq!(copy2.iter().cloned().collect::<Vec<_>>(), v);
     }
 
@@ -1561,30 +1569,30 @@ mod tests {
 
         let mut iterator = rle.runs();
 
-        assert_eq!(iterator.next(), Some(Run{ len: 5, value: &1 }));
-        assert_eq!(iterator.next(), Some(Run{ len: 4, value: &2 }));
-        assert_eq!(iterator.next(), Some(Run{ len: 3, value: &3 }));
-        assert_eq!(iterator.next(), Some(Run{ len: 4, value: &5 }));
+        assert_eq!(iterator.next(), Some(Run{ start: 0,  len: 5, value: &1 }));
+        assert_eq!(iterator.next(), Some(Run{ start: 5,  len: 4, value: &2 }));
+        assert_eq!(iterator.next(), Some(Run{ start: 9,  len: 3, value: &3 }));
+        assert_eq!(iterator.next(), Some(Run{ start: 12, len: 4, value: &5 }));
         assert_eq!(iterator.next(), None);
         assert_eq!(iterator.next(), None);
 
         let mut iterator = rle.runs();
 
-        assert_eq!(iterator.nth(0), Some(Run{ len: 5, value: &1 }));
-        assert_eq!(iterator.nth(0), Some(Run{ len: 4, value: &2 }));
-        assert_eq!(iterator.nth(0), Some(Run{ len: 3, value: &3 }));
-        assert_eq!(iterator.nth(0), Some(Run{ len: 4, value: &5 }));
+        assert_eq!(iterator.nth(0), Some(Run{ start: 0,  len: 5, value: &1 }));
+        assert_eq!(iterator.nth(0), Some(Run{ start: 5,  len: 4, value: &2 }));
+        assert_eq!(iterator.nth(0), Some(Run{ start: 9,  len: 3, value: &3 }));
+        assert_eq!(iterator.nth(0), Some(Run{ start: 12, len: 4, value: &5 }));
         assert_eq!(iterator.nth(0), None);
 
         let mut iterator = rle.runs();
 
-        assert_eq!(iterator.nth(0), Some(Run{ len: 5, value: &1 }));
-        assert_eq!(iterator.nth(1), Some(Run{ len: 3, value: &3 }));
-        assert_eq!(iterator.nth(0), Some(Run{ len: 4, value: &5 }));
+        assert_eq!(iterator.nth(0), Some(Run{ start: 0,  len: 5, value: &1 }));
+        assert_eq!(iterator.nth(1), Some(Run{ start: 9,  len: 3, value: &3 }));
+        assert_eq!(iterator.nth(0), Some(Run{ start: 12, len: 4, value: &5 }));
         assert_eq!(iterator.nth(0), None);
 
         assert_eq!(rle.runs().count(), 4);
-        assert_eq!(rle.runs().last(), Some(Run{ len: 4, value: &5 }));
+        assert_eq!(rle.runs().last(), Some(Run{ start: 12, len: 4, value: &5 }));
         assert_eq!(rle.runs().skip(10).last(), None);
 
     }
