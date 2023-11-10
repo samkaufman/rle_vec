@@ -412,7 +412,20 @@ impl<T> RleVec<T> {
         self.runs.shrink_to_fit();
     }
 
-    fn run_index(&self, index: u32) -> usize {
+    /// Returns the index of the run containing the value with the given index.
+    /// 
+    /// # Example
+    /// ```
+    /// # use rle_vec::{RleVec, Run};
+    /// let mut rle = RleVec::new();
+    /// rle.push(1);
+    /// rle.push(1);
+    /// rle.push(2);
+    /// assert_eq!(rle.run_index(0), 0);
+    /// assert_eq!(rle.run_index(1), 0);
+    /// assert_eq!(rle.run_index(2), 1);
+    /// ```
+    pub fn run_index(&self, index: u32) -> u32 {
         let (lesser_slice, greater_slice) = self.runs.as_slices();
 
         let target_slice ;
@@ -435,14 +448,15 @@ impl<T> RleVec<T> {
             Err(i) if i < target_slice.len() => i,
             _ => panic!("index out of bounds: the len is {} but the index is {}", self.len(), index)
         };
-        within_slice_result + slice_offset
+        u32::try_from(within_slice_result + slice_offset).unwrap()
     }
 
     fn index_info(&self, index: u32) -> (usize, u32, u32) {
         match self.run_index(index) {
             0 => (0, 0, self.runs[0].end.try_into().unwrap()),
             index => {
-                (index, self.runs[index - 1].end + 1, self.runs[index].end)
+                let index_usize = usize::try_from(index).unwrap();
+                (index_usize, self.runs[index_usize - 1].end + 1, self.runs[index_usize].end)
             },
         }
     }
@@ -546,7 +560,7 @@ impl<T: Eq + Clone> RleVec<T> {
         if hinted_start <= index && hinted_run.end >= index {
             (&hinted_run.value, run_index_hint)
         } else {
-            let run_index = self.run_index(index);
+            let run_index = usize::try_from(self.run_index(index)).unwrap();
             (&self.runs[run_index].value, run_index)
         }
     }
@@ -827,7 +841,8 @@ impl<T> Index<usize> for RleVec<T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &T {
-        &self.runs[self.run_index(index.try_into().unwrap())].value
+        let ri = usize::try_from(self.run_index(index.try_into().unwrap())).unwrap();
+        &self.runs[ri].value
     }
 }
 
@@ -1029,7 +1044,7 @@ impl<'a, T: 'a> Iterator for Iter<'a, T> {
         let new_run_index = if self.index < rle_len_u32 {
             self.rle.run_index(self.index)
         } else {
-            self.rle.runs.len() - 1
+            u32::try_from(self.rle.runs.len()).unwrap() - 1
         };
         self.run_index = new_run_index.try_into().unwrap();
         self.next()
