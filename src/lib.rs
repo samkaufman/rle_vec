@@ -401,7 +401,20 @@ impl<T> RleVec<T> {
         Runs { rle: self, run_index: 0, last_end: 0 }
     }
 
-    fn run_index(&self, index: usize) -> usize {
+    /// Returns the index of the run containing the value with the given index.
+    /// 
+    /// # Example
+    /// ```
+    /// # use rle_vec::{RleVec, Run};
+    /// let mut rle = RleVec::new();
+    /// rle.push(1);
+    /// rle.push(1);
+    /// rle.push(2);
+    /// assert_eq!(rle.run_index(0), 0);
+    /// assert_eq!(rle.run_index(1), 0);
+    /// assert_eq!(rle.run_index(2), 1);
+    /// ```
+    pub fn run_index(&self, index: usize) -> usize {
         match self.runs.binary_search_by(|run| run.end.cmp(&index)) {
             Ok(i) => i,
             Err(i) if i < self.runs.len() => i,
