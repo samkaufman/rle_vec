@@ -669,8 +669,14 @@ impl<T: Eq + Clone> RleVec<T> {
 
         let mut end = start + len - 1;  // end is inclusive
 
-        // Adjust `start` for merges with the previous run if values match.
+        // If value is equal to the start index's run, it's safe to snap start
+        // to the start of that run.
         let (left_run_idx, left_run_start, left_run_end) = self.index_info(start);
+        if start >= left_run_start && self.runs[left_run_idx].value == value {
+            start = left_run_start;
+        }
+
+        // Adjust `start` for merges with the previous run if values match.
         let mut start_run_idx = left_run_idx;
         let mut end_run_idx = left_run_idx;
         if start == left_run_start && left_run_idx > 0 && self.runs[left_run_idx - 1].value == value {
@@ -686,14 +692,24 @@ impl<T: Eq + Clone> RleVec<T> {
         // Adjust `end` for merges with the next run if values match.
         // TODO: These two branches share a lot of code. Consolidate.
         if end <= left_run_end {
+            if self.runs[left_run_idx].value == value {
+                end = left_run_end;
+            }
             if left_run_end == end && left_run_idx + 1 < self.runs.len() && self.runs[left_run_idx + 1].value == value {
                 end_run_idx += 1;
                 end = self.runs[end_run_idx].end;
             }
         } else {
             let (right_run_idx, _, right_run_end) = self.index_info(end);
+
+            // If value is equal to the end index's run, it's safe to snap end
+            // to the end of this run.
+            if end < right_run_end && self.runs[right_run_idx].value == value {
+                end = right_run_end;
+            }
+
             end_run_idx = right_run_idx;
-            if right_run_end == end && right_run_idx + 1 < self.runs.len() && self.runs[right_run_idx + 1].value == value {
+            if right_run_end <= end && right_run_idx + 1 < self.runs.len() && self.runs[right_run_idx + 1].value == value {
                 end_run_idx += 1;
                 end = self.runs[end_run_idx].end;
             }
@@ -1339,6 +1355,11 @@ mod tests {
 
     #[test]
     fn set_ranges() {
+        let mut rle = RleVec::from(&[0, 0, 0, 0, 0][..]);
+        rle.set_range(0, 2, 0);
+        assert_eq!(rle.to_vec(), vec![0, 0, 0, 0, 0]);
+        assert_postconditions(&rle);
+
         let mut rle = RleVec::from(&[1, 1, 2, 2, 3][..]);
         rle.set_range(3, 2, 4);
         assert_eq!(rle.to_vec(), vec![1, 1, 2, 4, 4]);
@@ -1387,6 +1408,9 @@ mod tests {
     }
 
     fn assert_postconditions<T: Eq>(rle: &RleVec<T>) {
+        if rle.runs.is_empty() {
+            return;
+        }
         assert!(rle.runs[0].end < rle.len().try_into().unwrap());
         for i in 1..rle.runs.len() {
             assert!(rle.runs[i].end < rle.len().try_into().unwrap());
